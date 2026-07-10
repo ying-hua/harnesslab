@@ -12,6 +12,7 @@
   ],
   "scripts": {
     "build": "tsc -b packages/cli",
+    "prepare": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest"
   },

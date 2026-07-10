@@ -79,6 +79,27 @@ assertions:
 
 因此 `run` 会自动决策：设置了 `ANTHROPIC_API_KEY` 时默认加 `--bare`（可复现的干净对照）；否则不加 `--bare` 并警告"本次 run 继承了本机 harness 配置，**不是**干净对照组"。可用 `--bare` / `--no-bare` 显式覆盖。
 
+## clone 之后怎么运行
+
+还没发到 npm，所以 `npx harnesslab` 不会去远端拉取——但在 clone 里执行一次 `npm install` 就能在本地用上这个命令（`prepare` 钩子会自动把所有包构建好）：
+
+```bash
+git clone <repo> && cd harnesslab
+npm install                         # 安装依赖并构建所有包
+npx harnesslab run cases/fix-auth   # 在仓库根目录直接跑，不用敲长长的 node 路径
+```
+
+`npx` 会从仓库本地的 `node_modules/.bin` 里解析 `harnesslab`，在 clone 内任意子目录都能用。
+
+想要一个在任何目录都能用的裸 `harnesslab` 命令？把它链接到 PATH 上一次即可：
+
+```bash
+npm link -w @harnesslab/cli   # 注册一个全局 `harnesslab` shim
+harnesslab run cases/fix-auth
+```
+
+> Windows 上 `npm link` 需要开发者模式或管理员终端才能创建全局符号链接。如果失败，就在仓库内用 `npx harnesslab`，或把 `packages/cli/dist/index.js` 加进你自己的启动器脚本。
+
 ## 开发
 
 ```bash
