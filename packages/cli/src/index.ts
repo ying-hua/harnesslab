@@ -19,7 +19,7 @@ program
   .option("--session <id>", "Use a specific session id")
   .option("-o, --output <dir>", "Fixture output directory (default cases/<task-slug>/)")
   .action((opts) => {
-    wrap(() => freeze(opts));
+    void wrap(() => freeze(opts));
   });
 
 program
@@ -37,7 +37,7 @@ program
     // Check the raw argv to distinguish "not passed" (auto mode).
     const argv = process.argv;
     const bareExplicit = argv.includes("--bare") || argv.includes("--no-bare");
-    wrap(() => runCase(casePath, { ...opts, bare: bareExplicit ? opts.bare : undefined }));
+    void wrap(() => runCase(casePath, { ...opts, bare: bareExplicit ? opts.bare : undefined }));
   });
 
 program
@@ -45,12 +45,12 @@ program
   .description("Summarize results under .harnesslab/runs (pass rate / token variance)")
   .option("--json", "Output JSON for CI consumption")
   .action((opts) => {
-    wrap(() => report(opts));
+    void wrap(() => report(opts));
   });
 
-function wrap(fn: () => void): void {
+async function wrap(fn: () => void | Promise<void>): Promise<void> {
   try {
-    fn();
+    await fn();
   } catch (e) {
     console.error(pc.red(e instanceof Error ? e.message : String(e)));
     process.exitCode = 1;
