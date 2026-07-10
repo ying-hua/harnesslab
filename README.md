@@ -79,6 +79,27 @@ assertions:
 
 `run` therefore decides automatically: with `ANTHROPIC_API_KEY` set it defaults to `--bare` (reproducible clean control); otherwise it runs without `--bare` and warns that the run inherited your local harness config and is **not** a clean control group. Override with `--bare` / `--no-bare`.
 
+## Running it after cloning
+
+Not yet on npm, so `npx harnesslab` won't fetch it — but one `npm install` in the clone makes the command available locally (a `prepare` hook builds every package for you):
+
+```bash
+git clone <repo> && cd harnesslab
+npm install                         # installs deps and builds all packages
+npx harnesslab run cases/fix-auth   # run from the repo root, no long node path
+```
+
+`npx` resolves `harnesslab` from the repo's local `node_modules/.bin`, so run it from anywhere inside the clone.
+
+Prefer a bare `harnesslab` command that works from any directory? Link it onto your PATH once:
+
+```bash
+npm link -w @harnesslab/cli   # registers a global `harnesslab` shim
+harnesslab run cases/fix-auth
+```
+
+> On Windows, `npm link` needs Developer Mode or an elevated shell to create the global symlink. If it fails, stick with `npx harnesslab` from inside the repo, or add `packages/cli/dist/index.js` to your own launcher.
+
 ## Development
 
 ```bash
