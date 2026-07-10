@@ -1,0 +1,26 @@
+{
+  "name": "@harnesslab/core",
+  "version": "0.1.0",
+  "description": "Unified session schema, fixture format, and assertion engine for HarnessLab",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "picomatch": "^4.0.0",
+    "yaml": "^2.4.0"
+  },
+  "devDependencies": {
+    "@types/picomatch": "^3.0.0"
+  }
+}

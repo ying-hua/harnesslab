@@ -1,0 +1,28 @@
+{
+  "name": "@harnesslab/cli",
+  "version": "0.1.0",
+  "description": "Freeze real AI coding agent sessions into repeatable regression tests for your harness config",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "harnesslab": "./dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@harnesslab/adapter-claude-code": "0.1.0",
+    "@harnesslab/core": "0.1.0",
+    "commander": "^13.0.0",
+    "picocolors": "^1.0.0"
+  }
+}

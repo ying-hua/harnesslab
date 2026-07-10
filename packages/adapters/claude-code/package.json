@@ -1,0 +1,22 @@
+{
+  "name": "@harnesslab/adapter-claude-code",
+  "version": "0.1.0",
+  "description": "Parse Claude Code session JSONL (~/.claude/projects) into the HarnessLab unified session schema",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@harnesslab/core": "0.1.0"
+  }
+}
