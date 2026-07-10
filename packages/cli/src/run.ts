@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -46,7 +46,7 @@ interface ClaudeJsonResult {
   };
 }
 
-export function runCase(casePath: string, opts: RunOptions): void {
+export async function runCase(casePath: string, opts: RunOptions): Promise<void> {
   const cwd = opts.cwd ?? process.cwd();
   const { fixture, fixtureDir, caseId } = loadFixture(casePath, cwd);
   const repoRoot = tryGit(["rev-parse", "--show-toplevel"], cwd)?.trim();
@@ -63,7 +63,7 @@ export function runCase(casePath: string, opts: RunOptions): void {
   for (const config of configs) {
     console.log(pc.bold(`\n▶ case=${caseId} config=${config.id} × ${n} run(s)`));
     for (let i = 0; i < n; i++) {
-      const result = runOnce({ fixture, fixtureDir, caseId, repoRoot, config, runIndex: i, opts });
+      const result = await runOnce({ fixture, fixtureDir, caseId, repoRoot, config, runIndex: i, opts });
       allResults.push(result);
       persistResult(result, repoRoot);
       printRunResult(result, i);
@@ -101,7 +101,7 @@ function loadConfig(file: string): RunConfig {
   return { id: raw.id ?? path.basename(file, ".json"), bare: raw.bare, flags: raw.flags };
 }
 
-function runOnce(args: {
+async function runOnce(args: {
   fixture: FixtureCase;
   fixtureDir: string;
   caseId: string;
@@ -109,7 +109,7 @@ function runOnce(args: {
   config: RunConfig;
   runIndex: number;
   opts: RunOptions;
-}): RunResult {
+}): Promise<RunResult> {
   const { fixture, fixtureDir, caseId, repoRoot, config, runIndex, opts } = args;
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
@@ -143,7 +143,13 @@ function runOnce(args: {
       );
 
       // 2. Invoke claude non-interactively
-      const { claudeResult, rawOutput, exitCode } = invokeClaude(fixture, config, worktreeDir, opts);
+      const { claudeResult, rawOutput, exitCode } = await invokeClaude(
+        fixture,
+        config,
+        worktreeDir,
+        opts,
+        `${caseId} / ${config.id} #${runIndex + 1}`,
+      );
       if (!claudeResult) {
         return {
           ...base,
@@ -219,22 +225,34 @@ function runOnce(args: {
   }
 }
 
+/** Mutable live-progress state, updated as stream-json events arrive, read by the spinner. */
+interface LiveProgress {
+  turn: number;
+  outputTokens: number; // cumulative output tokens across assistant turns — the number that visibly climbs
+  lastAction: string;
+}
+
 function invokeClaude(
   fixture: FixtureCase,
   config: RunConfig,
   worktreeDir: string,
   opts: RunOptions,
-): { claudeResult?: ClaudeJsonResult; rawOutput: string; exitCode: number } {
+  progressLabel: string,
+): Promise<{ claudeResult?: ClaudeJsonResult; rawOutput: string; exitCode: number }> {
   // --bare decision: explicit > config > auto (only dare to use --bare when an API key is present, since --bare skips OAuth)
   const bare = opts.bare ?? config.bare ?? Boolean(process.env.ANTHROPIC_API_KEY);
   if (!bare) {
     console.log(pc.yellow("  ⚠ not using --bare (no ANTHROPIC_API_KEY; --bare would skip subscription auth). This run inherited the local harness config and is not a clean control group."));
   }
 
+  // stream-json emits one JSON event per line (JSONL) as the run progresses, so we can show live
+  // turn / token / current-action progress instead of blocking on a single blob at the end.
+  // `-p` + `--output-format stream-json` requires `--verbose` (Claude Code errors otherwise).
   const cliArgs = [
     "-p",
     "--output-format",
-    "json",
+    "stream-json",
+    "--verbose",
     "--permission-mode",
     "acceptEdits",
     ...(bare ? ["--bare"] : []),
@@ -242,25 +260,146 @@ function invokeClaude(
     ...(config.flags ?? []),
   ];
 
-  // The task text is piped via stdin to avoid cross-platform argv quoting hell (cmd.exe escaping rules differ from sh's)
-  const r = spawnSync(quoteForShell("claude", cliArgs), {
-    shell: true,
-    cwd: worktreeDir,
-    input: fixture.task,
-    encoding: "utf8",
-    windowsHide: true,
-    maxBuffer: 64 * 1024 * 1024,
-    timeout: 30 * 60 * 1000,
+  // The task text is piped via stdin to avoid cross-platform argv quoting hell (cmd.exe escaping rules differ from sh's).
+  return new Promise((resolve) => {
+    const child = spawn(quoteForShell("claude", cliArgs), {
+      shell: true,
+      cwd: worktreeDir,
+      windowsHide: true,
+      timeout: 30 * 60 * 1000,
+    });
+
+    const live: LiveProgress = { turn: 0, outputTokens: 0, lastAction: "starting" };
+    let stdout = "";
+    let stderr = "";
+    let buf = ""; // holds the partial trailing line between data chunks
+    let resultEvent: ClaudeJsonResult | undefined;
+
+    const consumeLine = (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      const ev = tryParseJson(trimmed);
+      if (!ev) return;
+      if (ev.type === "assistant") {
+        live.turn += 1;
+        const msg = (ev as { message?: AssistantMessage }).message;
+        if (typeof msg?.usage?.output_tokens === "number") live.outputTokens += msg.usage.output_tokens;
+        const action = describeAssistantAction(msg);
+        if (action) live.lastAction = action;
+      } else if (ev.type === "result") {
+        // The final result event carries the same fields the old --output-format json blob did.
+        resultEvent = ev as ClaudeJsonResult;
+      }
+    };
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (d: string) => {
+      stdout += d;
+      buf += d;
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        consumeLine(buf.slice(0, nl));
+        buf = buf.slice(nl + 1);
+      }
+    });
+    child.stderr.on("data", (d: string) => (stderr += d));
+    child.stdin.on("error", () => {}); // ignore EPIPE if the child exits before consuming stdin
+    child.stdin.end(fixture.task);
+
+    const stopSpinner = startSpinner(progressLabel, live);
+
+    child.on("error", (err) => {
+      stopSpinner(live);
+      resolve({ rawOutput: err instanceof Error ? err.message : String(err), exitCode: 1 });
+    });
+    child.on("close", (code) => {
+      if (buf.trim()) consumeLine(buf); // flush any line not terminated by a newline
+      stopSpinner(live);
+      const rawOutput = [stdout, stderr].filter(Boolean).join("\n");
+      if (resultEvent) {
+        return resolve({ claudeResult: resultEvent, rawOutput, exitCode: 0 });
+      }
+      resolve({ rawOutput: rawOutput || `claude produced no result event (exit code ${code ?? 1})`, exitCode: code ?? 1 });
+    });
   });
-  const rawOutput = [r.stdout, r.stderr].filter(Boolean).join("\n");
-  if (r.status !== 0 || !r.stdout) {
-    return { rawOutput, exitCode: r.status ?? 1 };
-  }
+}
+
+/** A raw assistant message from stream-json (the Anthropic API message shape; parsed defensively). */
+interface AssistantMessage {
+  content?: Array<{ type?: string; name?: string; text?: string; input?: Record<string, unknown> }>;
+  usage?: { output_tokens?: number };
+}
+
+function tryParseJson(line: string): { type?: string } | undefined {
   try {
-    return { claudeResult: JSON.parse(r.stdout) as ClaudeJsonResult, rawOutput, exitCode: 0 };
+    return JSON.parse(line) as { type?: string };
   } catch {
-    return { rawOutput: `could not parse claude's JSON output:\n${rawOutput}`, exitCode: r.status ?? 1 };
+    return undefined;
   }
+}
+
+/** Summarize what the assistant did this turn for the live line, e.g. "Edit auth.py" or "Bash: pytest ...". */
+function describeAssistantAction(msg?: AssistantMessage): string | undefined {
+  const blocks = msg?.content ?? [];
+  let text: string | undefined;
+  for (const b of blocks) {
+    if (b.type === "tool_use") {
+      const input = b.input ?? {};
+      const file = input.file_path ?? input.path ?? input.notebook_path;
+      if (typeof file === "string") return `${b.name} ${file.split(/[\\/]/).pop()}`;
+      if (b.name === "Bash" && typeof input.command === "string") return `Bash: ${input.command.replace(/\s+/g, " ").slice(0, 40)}`;
+      return b.name ?? "tool";
+    }
+    if (b.type === "text" && b.text?.trim()) text = "writing…";
+  }
+  return text;
+}
+
+/**
+ * Show a live progress line while claude executes: spinner + elapsed + turn + cumulative output tokens + current action.
+ * On a TTY, redraw in place with \r; off a TTY (CI / redirected output), print a heartbeat line every 20s so logs
+ * don't get spammed. Returns a stop function (called on close/error) that clears the timer and prints a final summary.
+ */
+function startSpinner(label: string, live: LiveProgress): (final: LiveProgress) => void {
+  const t0 = Date.now();
+  const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+  const isTty = Boolean(process.stdout.isTTY);
+  let i = 0;
+  const elapsed = (ms: number) => {
+    const s = Math.floor(ms / 1000);
+    return s >= 60 ? `${Math.floor(s / 60)}m${s % 60}s` : `${s}s`;
+  };
+  const status = () => {
+    const turn = live.turn > 0 ? ` · turn ${live.turn}` : "";
+    const tok = ` · ↓${fmtTokens(live.outputTokens)} tok`;
+    return `${elapsed(Date.now() - t0)} — ${label}${turn}${tok} · ${live.lastAction}`;
+  };
+  const tick = () => {
+    if (isTty) {
+      const width = Math.max(20, (process.stdout.columns ?? 80) - 4);
+      let content = `running ${status()}`;
+      if (content.length > width) content = content.slice(0, width - 1) + "…";
+      process.stdout.write(`\r  ${pc.cyan(frames[i++ % frames.length])} ${content.padEnd(width)}`);
+    } else {
+      console.log(pc.dim(`  … running ${status()}`));
+    }
+  };
+  tick();
+  const timer = setInterval(tick, isTty ? 100 : 20000);
+  timer.unref?.();
+  return (final: LiveProgress) => {
+    clearInterval(timer);
+    if (isTty) {
+      const width = process.stdout.columns ? process.stdout.columns - 1 : 79;
+      process.stdout.write("\r" + " ".repeat(width) + "\r");
+    }
+    console.log(pc.dim(`  ✓ done in ${elapsed(Date.now() - t0)} · ${final.turn} turns · ↓${fmtTokens(final.outputTokens)} output tokens`));
+  };
+}
+
+function fmtTokens(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 
 /** Assemble a command string for shell:true: quote args containing spaces/special chars and escape inner double quotes */
