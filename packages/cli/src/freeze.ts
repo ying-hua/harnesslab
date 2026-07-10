@@ -22,14 +22,14 @@ export interface FreezeOptions {
 export function freeze(opts: FreezeOptions): void {
   const cwd = opts.cwd ?? process.cwd();
 
-  // 1. 定位 session
+  // 1. Locate the session
   const info = findSessionFile({ cwd, sessionId: opts.session });
   if (!info) {
     console.error(
       pc.red(
         opts.session
-          ? `找不到 session "${opts.session}"（在 ~/.claude/projects 下没有对应的 .jsonl）`
-          : `当前目录 ${cwd} 下没有任何 Claude Code session。先用 Claude Code 完成一次任务再 freeze。`,
+          ? `Could not find session "${opts.session}" (no matching .jsonl under ~/.claude/projects)`
+          : `No Claude Code session found under ${cwd}. Finish a task with Claude Code first, then freeze it.`,
       ),
     );
     process.exitCode = 1;
@@ -37,33 +37,33 @@ export function freeze(opts: FreezeOptions): void {
   }
   console.log(pc.dim(`session: ${info.sessionId} (${Math.round(info.sizeBytes / 1024)}KB, ${info.mtime.toISOString()})`));
 
-  // 2. 解析
+  // 2. Parse
   const session = parseSessionFile(info.filePath);
   for (const w of session.parseWarnings ?? []) console.log(pc.yellow(`  ⚠ ${w}`));
 
   const firstUserTurn = session.turns.find((t) => t.role === "user");
   if (!firstUserTurn) {
-    console.error(pc.red("session 里没有用户消息，无法提取任务描述"));
+    console.error(pc.red("No user message found in the session; cannot extract a task description"));
     process.exitCode = 1;
     return;
   }
   const task = firstUserTurn.content.trim();
 
-  // 3. git 状态
+  // 3. Git state
   const baseRef = tryGit(["rev-parse", "HEAD"], cwd)?.trim();
   if (!baseRef) {
-    console.error(pc.red(`${cwd} 不是 git 仓库（或没有任何 commit）。freeze 需要 git 来记录工作区状态。`));
+    console.error(pc.red(`${cwd} is not a git repository (or has no commits). freeze needs git to record workspace state.`));
     process.exitCode = 1;
     return;
   }
   const dirtyDiff = git(["diff", "HEAD"], cwd);
   const untracked = tryGit(["ls-files", "--others", "--exclude-standard"], cwd)?.trim();
 
-  // 4. 断言初稿（确定性启发式；LLM 辅助生成是 v0.2 计划）
+  // 4. Draft assertions (deterministic heuristics; LLM-assisted generation is planned for v0.2)
   const assertions = draftAssertions(session);
   const allowedTools = draftAllowedTools(session);
 
-  // 5. 落盘 fixture 目录
+  // 5. Write the fixture directory to disk
   const outDir = path.resolve(cwd, opts.output ?? path.join("cases", slugify(task) || info.sessionId.slice(0, 8)));
   fs.mkdirSync(outDir, { recursive: true });
 
@@ -94,22 +94,22 @@ export function freeze(opts: FreezeOptions): void {
     zlib.gzipSync(fs.readFileSync(info.filePath)),
   );
 
-  // 6. 汇报
-  console.log(pc.green(`\n✔ fixture 已生成: ${path.relative(cwd, outDir)}`));
+  // 6. Report back
+  console.log(pc.green(`\n✔ fixture created: ${path.relative(cwd, outDir)}`));
   console.log(`  task: ${task.length > 80 ? task.slice(0, 80) + "…" : task}`);
-  console.log(`  base_ref: ${baseRef.slice(0, 12)}${hasPatch ? " + workspace.patch" : "（工作区干净，无 patch）"}`);
-  console.log(`  断言初稿 ${assertions.length} 条（启发式生成，${pc.bold("请打开 case.yaml 逐条确认/修改")}）`);
+  console.log(`  base_ref: ${baseRef.slice(0, 12)}${hasPatch ? " + workspace.patch" : " (clean workspace, no patch)"}`);
+  console.log(`  ${assertions.length} draft assertion(s) (heuristically generated, ${pc.bold("please open case.yaml and review/edit each one")})`);
   if (untracked) {
-    console.log(pc.yellow(`  ⚠ 有未跟踪文件不会进入 patch: ${untracked.split("\n").slice(0, 5).join(", ")}${untracked.split("\n").length > 5 ? " …" : ""}`));
+    console.log(pc.yellow(`  ⚠ untracked files will not be included in the patch: ${untracked.split("\n").slice(0, 5).join(", ")}${untracked.split("\n").length > 5 ? " …" : ""}`));
   }
   const networkish = detectSideEffectCommands(session);
   if (networkish.length > 0) {
-    console.log(pc.yellow(`  ⚠ 原始会话包含疑似网络/副作用命令，此 fixture 可能不适合重放: ${networkish.join("; ")}`));
+    console.log(pc.yellow(`  ⚠ the original session contains commands that look like network/side effects; this fixture may not be suitable for replay: ${networkish.join("; ")}`));
   }
-  console.log(pc.dim(`\n下一步: npx harnesslab run ${path.relative(cwd, path.join(outDir, "case.yaml"))}`));
+  console.log(pc.dim(`\nnext: npx harnesslab run ${path.relative(cwd, path.join(outDir, "case.yaml"))}`));
 }
 
-/** 从 Edit/Write 类工具调用反推 files_changed，从原始用量反推 budget */
+/** Derive files_changed from Edit/Write-style tool calls, and budget from the original usage */
 function draftAssertions(session: UnifiedSession): Assertion[] {
   const editedFiles = new Set<string>();
   for (const turn of session.turns) {
@@ -130,14 +130,14 @@ function draftAssertions(session: UnifiedSession): Assertion[] {
   assertions.push({ type: "forbidden_commands", patterns: ["git push", "rm -rf"] });
   assertions.push({
     type: "budget",
-    // 给 2 倍余量：重放的方差不该导致预算断言天天误报
+    // Give 2x headroom: replay variance shouldn't make the budget assertion flake daily
     max_total_tokens: Math.ceil((totals.total * 2) / 1000) * 1000 || 100_000,
     max_turns: Math.max(session.turns.length * 2, 10),
   });
   return assertions;
 }
 
-/** 非 Bash 工具取名字去重；Bash 命令按首 token 归纳成 Bash(xxx *) 前缀规则 */
+/** Dedupe non-Bash tools by name; group Bash commands into Bash(xxx *) prefix rules by their first token */
 function draftAllowedTools(session: UnifiedSession): string[] {
   const tools = new Set<string>();
   const bashPrefixes = new Set<string>();

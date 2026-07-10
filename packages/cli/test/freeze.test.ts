@@ -22,9 +22,9 @@ function gitIn(args: string[]) {
   execFileSync("git", args, { cwd: repo, stdio: "pipe" });
 }
 
-describe("freeze 端到端（真实 git 仓库 + 伪造 session 目录）", () => {
-  it("生成完整 fixture：case.yaml + workspace.patch + 压缩存档", () => {
-    // 准备一个有 1 个 commit + 未提交改动的仓库
+describe("freeze end to end (real git repo + a faked session directory)", () => {
+  it("produces a complete fixture: case.yaml + workspace.patch + compressed archive", () => {
+    // Set up a repo with 1 commit plus an uncommitted change
     fs.mkdirSync(repo, { recursive: true });
     fs.writeFileSync(path.join(repo, "auth.py"), "def check(token): ...\n");
     gitIn(["init"]);
@@ -32,7 +32,7 @@ describe("freeze 端到端（真实 git 仓库 + 伪造 session 目录）", () =
     gitIn(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init"]);
     fs.appendFileSync(path.join(repo, "auth.py"), "# WIP dirty change\n");
 
-    // 伪造 session：golden 文件改写 cwd 指向这个仓库，放进伪造的 ~/.claude/projects
+    // Fake a session: rewrite the golden file's cwd to point at this repo, drop it into a fake ~/.claude/projects
     const golden = fs.readFileSync(
       path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../adapters/claude-code/test/fixtures/golden-session.jsonl"),
       "utf8",
@@ -59,20 +59,20 @@ describe("freeze 端到端（真实 git 仓库 + 伪造 session 目录）", () =
     const caseDir = path.join(repo, "cases", "demo");
     const fixture = parseFixtureCase(fs.readFileSync(path.join(caseDir, "case.yaml"), "utf8"));
 
-    expect(fixture.task).toContain("token 过期");
+    expect(fixture.task).toContain("token expiry");
     expect(fixture.source).toBe("claude-code");
     expect(fixture.workspace.base_ref).toMatch(/^[0-9a-f]{40}$/);
     expect(fixture.workspace.dirty_patch).toBe("workspace.patch");
     expect(fs.readFileSync(path.join(caseDir, "workspace.patch"), "utf8")).toContain("WIP dirty change");
     expect(fs.existsSync(path.join(caseDir, "original-session.jsonl.gz"))).toBe(true);
 
-    // 启发式断言初稿
+    // Heuristically drafted assertions
     const filesChanged = fixture.assertions.find((a) => a.type === "files_changed") as FilesChangedAssertion;
     expect(filesChanged.must_include).toEqual(["src/auth.py"]);
     expect(fixture.assertions.some((a) => a.type === "budget")).toBe(true);
     expect(fixture.assertions.some((a) => a.type === "forbidden_commands")).toBe(true);
 
-    // allowed_tools：非 Bash 工具按名字，Bash 按首 token 归纳
+    // allowed_tools: non-Bash tools by name, Bash commands grouped by first token
     expect(fixture.allowed_tools).toContain("Edit");
     expect(fixture.allowed_tools).toContain("Bash(pytest *)");
 
@@ -81,14 +81,14 @@ describe("freeze 端到端（真实 git 仓库 + 伪造 session 目录）", () =
   });
 });
 
-describe("run 的纯函数", () => {
-  it("quoteForShell 给含空格/通配符的参数加引号", () => {
+describe("run's pure functions", () => {
+  it("quoteForShell quotes args containing spaces/wildcards", () => {
     expect(quoteForShell("claude", ["-p", "--allowedTools", "Read,Bash(git diff *)"])).toBe(
       'claude -p --allowedTools "Read,Bash(git diff *)"',
     );
   });
 
-  it("parsePorcelainStatus 处理修改/新增/重命名/引号路径", () => {
+  it("parsePorcelainStatus handles modified/added/renamed/quoted paths", () => {
     const out = ' M src/auth.py\n?? new file.txt\nR  old.py -> new.py\n M "\\346\\265\\213.py"\n';
     const files = parsePorcelainStatus(out);
     expect(files).toContain("src/auth.py");

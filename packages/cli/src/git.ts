@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 
 export class GitError extends Error {
   constructor(args: string[], public exitCode: number, public output: string) {
-    super(`git ${args.join(" ")} 失败（退出码 ${exitCode}）:\n${output}`);
+    super(`git ${args.join(" ")} failed (exit code ${exitCode}):\n${output}`);
     this.name = "GitError";
   }
 }
@@ -22,7 +22,7 @@ export function tryGit(args: string[], cwd: string): string | undefined {
   }
 }
 
-/** 解析 `git status --porcelain` 输出为文件路径列表（rename 取新路径，路径去引号） */
+/** Parse `git status --porcelain` output into a list of file paths (renames take the new path, paths are unquoted) */
 export function parsePorcelainStatus(output: string): string[] {
   const files: string[] = [];
   for (const line of output.split("\n")) {
@@ -31,7 +31,7 @@ export function parsePorcelainStatus(output: string): string[] {
     const arrow = p.indexOf(" -> ");
     if (arrow >= 0) p = p.slice(arrow + 4);
     if (p.startsWith('"') && p.endsWith('"')) {
-      // git 对非 ASCII 路径加引号并转义
+      // git quotes and escapes non-ASCII paths
       try {
         p = JSON.parse(p);
       } catch {

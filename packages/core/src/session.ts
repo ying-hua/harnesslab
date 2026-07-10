@@ -1,6 +1,7 @@
 /**
- * 统一 Session Schema —— 所有 adapter 归一化之后的公共格式。
- * 断言引擎和报告层只认这个格式，不直接接触任何上游原始 JSONL。
+ * Unified Session Schema -- the common format every adapter normalizes into.
+ * The assertion engine and reporting layer only ever see this format; they never
+ * touch any upstream raw JSONL directly.
  */
 
 export interface UnifiedSession {
@@ -23,7 +24,7 @@ export interface UnifiedSession {
       cacheWrite?: number;
     };
   };
-  /** adapter 解析过程中跳过/降级的内容，供诊断，不参与断言 */
+  /** Content the adapter skipped or downgraded while parsing, for diagnostics only; never used by assertions */
   parseWarnings?: string[];
 }
 
@@ -31,9 +32,10 @@ export interface UnifiedTurn {
   index: number;
   role: "user" | "assistant";
   /**
-   * system prompt / tool schema 的快照，用于缓存归因逐轮 diff。
-   * 不存全文，存 hash + 长度，避免 fixture 文件过大。
-   * 上游数据拿不到时为 undefined（例如 Claude Code 交互式 session JSONL 不含 system prompt）。
+   * Snapshot of the system prompt / tool schema, used for per-turn cache attribution diffing.
+   * Stores a hash + length rather than the full text, to keep fixture files small.
+   * Undefined when the upstream data doesn't expose it (e.g. Claude Code's interactive session
+   * JSONL doesn't include the system prompt).
    */
   requestPrefixSnapshot?: {
     systemPromptHash: string;
@@ -58,7 +60,7 @@ export interface UnifiedToolCall {
   endedAt: string;
 }
 
-/** 从 session 中提取所有 Bash 类工具调用的命令字符串（forbidden_commands 断言的输入） */
+/** Extract the command string from every Bash-style tool call in a session (input to the forbidden_commands assertion) */
 export function extractBashCommands(session: UnifiedSession): string[] {
   const commands: string[] = [];
   for (const turn of session.turns) {
@@ -71,7 +73,7 @@ export function extractBashCommands(session: UnifiedSession): string[] {
   return commands;
 }
 
-/** 汇总整个 session 的 token 用量 */
+/** Sum token usage across an entire session */
 export function sumSessionTokens(session: UnifiedSession): {
   input: number;
   output: number;

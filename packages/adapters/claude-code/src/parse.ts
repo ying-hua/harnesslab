@@ -1,19 +1,22 @@
 import type { UnifiedSession, UnifiedToolCall, UnifiedTurn } from "@harnesslab/core";
 
 /**
- * Claude Code session JSONL → UnifiedSession。
+ * Claude Code session JSONL -> UnifiedSession.
  *
- * 容错优先：未知行类型跳过并计入 parseWarnings，绝不抛异常炸掉整个解析
- * （上游格式随版本漂移，宁可少解析也不静默产出错误结果——配合 golden file
- * 测试，格式一变 CI 先红）。
+ * Fault-tolerant by design: unknown line types are skipped and recorded in
+ * parseWarnings, never thrown as an exception that blows up the whole parse
+ * (the upstream format drifts across versions, so it's better to under-parse
+ * than to silently produce a wrong result -- combined with golden-file tests,
+ * a format change turns CI red instead of failing silently).
  *
- * 实测格式要点（Claude Code v2.1.x）：
- * - 行类型有 user / assistant / attachment / queue-operation / ai-title /
- *   last-prompt / summary 等，只有 user 和 assistant 参与归一化。
- * - `isSidechain: true` 是子代理（subagent）的旁路轨迹，跳过。
- * - user 行的 message.content 可能是字符串，也可能是 text / tool_result 块数组；
- *   tool_result 通过 tool_use_id 关联到之前 assistant 行里的 tool_use 块。
- * - assistant 行的 message.usage 含 cache_read_input_tokens / cache_creation_input_tokens。
+ * Observed format details (Claude Code v2.1.x):
+ * - Line types include user / assistant / attachment / queue-operation / ai-title /
+ *   last-prompt / summary, etc. Only user and assistant participate in normalization.
+ * - `isSidechain: true` marks a subagent's side trace and is skipped.
+ * - A user line's message.content may be a plain string, or an array of text /
+ *   tool_result blocks; tool_result links back to a tool_use block in a prior
+ *   assistant line via tool_use_id.
+ * - An assistant line's message.usage includes cache_read_input_tokens / cache_creation_input_tokens.
  */
 
 interface RawLine {
@@ -61,13 +64,13 @@ export function parseSessionJsonl(jsonlText: string): UnifiedSession {
     try {
       lines.push(JSON.parse(trimmed) as RawLine);
     } catch {
-      warnings.push(`第 ${i + 1} 行不是合法 JSON，已跳过`);
+      warnings.push(`line ${i + 1} is not valid JSON, skipped`);
     }
   }
 
   const skippedTypes = new Map<string, number>();
   const turns: UnifiedTurn[] = [];
-  /** tool_use_id → 等待回填结果的 toolCall */
+  /** tool_use_id -> the toolCall waiting to be filled in with its result */
   const pendingToolCalls = new Map<string, UnifiedToolCall>();
 
   let sessionId = "";
@@ -90,7 +93,7 @@ export function parseSessionJsonl(jsonlText: string): UnifiedSession {
     }
     if (line.isSidechain === true || line.isMeta === true) continue;
     if (!line.message) {
-      warnings.push(`一条 ${line.type} 行缺少 message 字段，已跳过`);
+      warnings.push(`a ${line.type} line is missing its message field, skipped`);
       continue;
     }
 
@@ -103,11 +106,11 @@ export function parseSessionJsonl(jsonlText: string): UnifiedSession {
     if (line.type === "user") {
       const { text, toolResults } = splitUserContent(line.message.content);
 
-      // 回填 tool_result 到对应的 toolCall
+      // Fill in the tool_result for its matching toolCall
       for (const tr of toolResults) {
         const call = tr.tool_use_id ? pendingToolCalls.get(tr.tool_use_id) : undefined;
         if (!call) {
-          warnings.push(`tool_result ${tr.tool_use_id ?? "(无 id)"} 找不到对应的 tool_use，已丢弃`);
+          warnings.push(`tool_result ${tr.tool_use_id ?? "(no id)"} has no matching tool_use, discarded`);
           continue;
         }
         call.result = { output: blockContentToText(tr.content), isError: tr.is_error === true };
@@ -119,7 +122,7 @@ export function parseSessionJsonl(jsonlText: string): UnifiedSession {
         turns.push({ index: turns.length, role: "user", content: text, toolCalls: [] });
       }
     } else {
-      // assistant：同一 turn 内的多条消息（工具循环）合并
+      // assistant: multiple messages within the same turn (a tool loop) are merged
       let turn = currentTurn();
       if (!turn || turn.role !== "assistant") {
         turn = { index: turns.length, role: "assistant", content: "", toolCalls: [] };
@@ -148,7 +151,7 @@ export function parseSessionJsonl(jsonlText: string): UnifiedSession {
           turn.toolCalls.push(call);
           if (block.id) pendingToolCalls.set(block.id, call);
         }
-        // thinking / redacted_thinking 等块不进入统一格式
+        // thinking / redacted_thinking blocks etc. don't carry over into the unified format
       }
 
       const u = line.message.usage;
@@ -165,10 +168,10 @@ export function parseSessionJsonl(jsonlText: string): UnifiedSession {
   }
 
   if (pendingToolCalls.size > 0) {
-    warnings.push(`${pendingToolCalls.size} 个 tool_use 没有等到 tool_result（会话可能被中断）`);
+    warnings.push(`${pendingToolCalls.size} tool_use call(s) never received a tool_result (the session may have been interrupted)`);
   }
   for (const [t, n] of skippedTypes) {
-    warnings.push(`跳过 ${n} 条 type="${t}" 的行`);
+    warnings.push(`skipped ${n} line(s) with type="${t}"`);
   }
 
   let input = 0;

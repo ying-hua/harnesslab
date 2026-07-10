@@ -17,20 +17,20 @@ export interface RunOptions {
   n?: string;
   config?: string;
   matrix?: string;
-  bare?: boolean; // commander: --bare / --no-bare；undefined = 自动
+  bare?: boolean; // commander: --bare / --no-bare; undefined = auto
   keepWorktree?: boolean;
   cwd?: string;
 }
 
-/** 注入到 claude -p 调用的一组变量（对照组/实验组） */
+/** A set of variables injected into the claude -p invocation (control group / experiment group) */
 interface RunConfig {
   id: string;
   bare?: boolean;
-  /** 原样追加到 claude 命令的 flag，例如 ["--append-system-prompt-file", "skills/x.md"] */
+  /** Flags appended verbatim to the claude command, e.g. ["--append-system-prompt-file", "skills/x.md"] */
   flags?: string[];
 }
 
-/** claude -p --output-format json 的返回体（防御性解析，字段可能随版本变化） */
+/** The response body of claude -p --output-format json (parsed defensively; fields may change across versions) */
 interface ClaudeJsonResult {
   result?: string;
   session_id?: string;
@@ -51,7 +51,7 @@ export function runCase(casePath: string, opts: RunOptions): void {
   const { fixture, fixtureDir, caseId } = loadFixture(casePath, cwd);
   const repoRoot = tryGit(["rev-parse", "--show-toplevel"], cwd)?.trim();
   if (!repoRoot) {
-    console.error(pc.red(`${cwd} 不是 git 仓库，run 需要 git worktree 来隔离工作区`));
+    console.error(pc.red(`${cwd} is not a git repository; run needs a git worktree to isolate the workspace`));
     process.exitCode = 1;
     return;
   }
@@ -61,7 +61,7 @@ export function runCase(casePath: string, opts: RunOptions): void {
   const allResults: RunResult[] = [];
 
   for (const config of configs) {
-    console.log(pc.bold(`\n▶ case=${caseId} config=${config.id} × ${n} 次`));
+    console.log(pc.bold(`\n▶ case=${caseId} config=${config.id} × ${n} run(s)`));
     for (let i = 0; i < n; i++) {
       const result = runOnce({ fixture, fixtureDir, caseId, repoRoot, config, runIndex: i, opts });
       allResults.push(result);
@@ -89,7 +89,7 @@ function resolveConfigs(opts: RunOptions, cwd: string): RunConfig[] {
       .readdirSync(dir)
       .filter((f) => f.endsWith(".json"))
       .sort();
-    if (files.length === 0) throw new Error(`matrix 目录 ${dir} 下没有 .json 配置`);
+    if (files.length === 0) throw new Error(`no .json configs found under matrix directory ${dir}`);
     return files.map((f) => loadConfig(path.join(dir, f)));
   }
   if (opts.config) return [loadConfig(path.resolve(cwd, opts.config))];
@@ -129,20 +129,20 @@ function runOnce(args: {
   );
 
   try {
-    // 1. 还原冻结时的工作区
+    // 1. Restore the workspace as it was when frozen
     git(["worktree", "add", "--detach", worktreeDir, fixture.workspace.base_ref], repoRoot);
     try {
       if (fixture.workspace.dirty_patch) {
         git(["apply", path.resolve(fixtureDir, fixture.workspace.dirty_patch)], worktreeDir);
       }
-      // 把冻结状态 commit 掉，之后 git status 看到的就全是 agent 的改动
+      // Commit the frozen state so that everything `git status` sees afterwards is the agent's own changes
       git(["add", "-A"], worktreeDir);
       git(
         ["-c", "user.name=harnesslab", "-c", "user.email=harnesslab@localhost", "commit", "--allow-empty", "-m", "harnesslab: frozen workspace state"],
         worktreeDir,
       );
 
-      // 2. 非交互执行 claude
+      // 2. Invoke claude non-interactively
       const { claudeResult, rawOutput, exitCode } = invokeClaude(fixture, config, worktreeDir, opts);
       if (!claudeResult) {
         return {
@@ -150,7 +150,7 @@ function runOnce(args: {
           passed: false,
           assertionResults: [],
           durationMs: Date.now() - t0,
-          runnerError: `claude -p 执行失败（退出码 ${exitCode}）: ${rawOutput.slice(0, 500)}`,
+          runnerError: `claude -p failed (exit code ${exitCode}): ${rawOutput.slice(0, 500)}`,
         };
       }
 
@@ -163,7 +163,7 @@ function runOnce(args: {
       };
       const totalTokens = tokens.input + tokens.output + tokens.cacheRead + tokens.cacheCreation;
 
-      // 3. 找到重放产生的 session 轨迹（forbidden_commands 需要）
+      // 3. Locate the session trace produced by the replay (needed for forbidden_commands)
       let bashCommands: string[] = [];
       let traceWarning: string | undefined;
       if (claudeResult.session_id) {
@@ -171,11 +171,11 @@ function runOnce(args: {
         if (traceFile) {
           bashCommands = extractBashCommands(parseSessionFile(traceFile.filePath));
         } else {
-          traceWarning = `找不到重放 session ${claudeResult.session_id} 的轨迹文件，forbidden_commands 断言基于空命令列表`;
+          traceWarning = `could not find the trace file for replay session ${claudeResult.session_id}; forbidden_commands is evaluated against an empty command list`;
         }
       }
 
-      // 4. 断言
+      // 4. Run assertions
       const changedFiles = parsePorcelainStatus(git(["status", "--porcelain"], worktreeDir));
       const { passed, results } = runAssertions(fixture.assertions, {
         workspaceDir: worktreeDir,
@@ -198,11 +198,11 @@ function runOnce(args: {
         turns: claudeResult.num_turns ?? 0,
         durationMs: Date.now() - t0,
         replaySessionId: claudeResult.session_id,
-        ...(claudeResult.is_error ? { runnerError: "claude 返回 is_error=true" } : {}),
+        ...(claudeResult.is_error ? { runnerError: "claude returned is_error=true" } : {}),
       };
     } finally {
       if (opts.keepWorktree) {
-        console.log(pc.dim(`  worktree 保留在 ${worktreeDir}`));
+        console.log(pc.dim(`  worktree kept at ${worktreeDir}`));
       } else {
         tryGit(["worktree", "remove", "--force", worktreeDir], repoRoot);
       }
@@ -225,10 +225,10 @@ function invokeClaude(
   worktreeDir: string,
   opts: RunOptions,
 ): { claudeResult?: ClaudeJsonResult; rawOutput: string; exitCode: number } {
-  // --bare 决策：显式 > 配置 > 自动（有 API key 才敢用 --bare，因为 --bare 跳过 OAuth）
+  // --bare decision: explicit > config > auto (only dare to use --bare when an API key is present, since --bare skips OAuth)
   const bare = opts.bare ?? config.bare ?? Boolean(process.env.ANTHROPIC_API_KEY);
   if (!bare) {
-    console.log(pc.yellow("  ⚠ 未使用 --bare（无 ANTHROPIC_API_KEY，--bare 会跳过订阅认证）。本次 run 继承了本机 harness 配置，不是干净对照组。"));
+    console.log(pc.yellow("  ⚠ not using --bare (no ANTHROPIC_API_KEY; --bare would skip subscription auth). This run inherited the local harness config and is not a clean control group."));
   }
 
   const cliArgs = [
@@ -242,7 +242,7 @@ function invokeClaude(
     ...(config.flags ?? []),
   ];
 
-  // 任务文本走 stdin，避免跨平台 argv 引号地狱（cmd.exe 的转义规则和 sh 不同）
+  // The task text is piped via stdin to avoid cross-platform argv quoting hell (cmd.exe escaping rules differ from sh's)
   const r = spawnSync(quoteForShell("claude", cliArgs), {
     shell: true,
     cwd: worktreeDir,
@@ -259,11 +259,11 @@ function invokeClaude(
   try {
     return { claudeResult: JSON.parse(r.stdout) as ClaudeJsonResult, rawOutput, exitCode: 0 };
   } catch {
-    return { rawOutput: `无法解析 claude 的 JSON 输出:\n${rawOutput}`, exitCode: r.status ?? 1 };
+    return { rawOutput: `could not parse claude's JSON output:\n${rawOutput}`, exitCode: r.status ?? 1 };
   }
 }
 
-/** 为 shell:true 拼一条命令：含空格/特殊字符的参数加双引号并转义内部双引号 */
+/** Assemble a command string for shell:true: quote args containing spaces/special chars and escape inner double quotes */
 export function quoteForShell(cmd: string, args: string[]): string {
   const quoted = args.map((a) => (/[\s"()*&|<>^]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a));
   return [cmd, ...quoted].join(" ");
@@ -298,7 +298,7 @@ function printRunResult(r: RunResult, i: number): void {
 
 function printAggregate(results: RunResult[], n: number): void {
   if (results.length <= 1) return;
-  console.log(pc.bold("\n汇总"));
+  console.log(pc.bold("\nsummary"));
   const byConfig = new Map<string, RunResult[]>();
   for (const r of results) {
     const list = byConfig.get(r.configId) ?? [];
@@ -309,11 +309,11 @@ function printAggregate(results: RunResult[], n: number): void {
     const passRate = rs.filter((r) => r.passed).length / rs.length;
     const tokenTotals = rs.map((r) => r.tokens.input + r.tokens.output + r.tokens.cacheRead + r.tokens.cacheCreation);
     console.log(
-      `  ${configId}: 通过 ${rs.filter((r) => r.passed).length}/${rs.length} (${(passRate * 100).toFixed(0)}%), ` +
-        `tokens 中位数 ${median(tokenTotals).toLocaleString()} ± ${Math.round(stddev(tokenTotals)).toLocaleString()}`,
+      `  ${configId}: passed ${rs.filter((r) => r.passed).length}/${rs.length} (${(passRate * 100).toFixed(0)}%), ` +
+        `tokens median ${median(tokenTotals).toLocaleString()} ± ${Math.round(stddev(tokenTotals)).toLocaleString()}`,
     );
   }
-  if (n === 1) console.log(pc.dim("  提示: 单次结果受 LLM 方差影响大，用 -n 5 采样看统计性质"));
+  if (n === 1) console.log(pc.dim("  tip: a single run is heavily affected by LLM variance; use -n 5 to sample and see the statistical spread"));
 }
 
 export function median(xs: number[]): number {

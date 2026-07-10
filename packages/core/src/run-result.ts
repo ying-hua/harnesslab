@@ -1,9 +1,9 @@
-/** 单次执行结果（规格书 §5.3），`report` 的输入 */
+/** A single execution result (spec §5.3), the input to `report` */
 
 export interface AssertionResult {
   type: string;
   passed: boolean;
-  /** optional 断言（如 judge）不计入整体 pass/fail */
+  /** Optional assertions (e.g. judge) don't count toward overall pass/fail */
   optional?: boolean;
   detail?: string;
 }
@@ -17,7 +17,7 @@ export interface CacheBustEvent {
     | "unstable_content"
     | "unknown";
   detail: string;
-  /** 永远是 "inferred"：我们拿不到 wire-level 请求，只能从 session 数据反推 */
+  /** Always "inferred": we don't have access to the wire-level request, only what we can derive from session data */
   confidence: "inferred";
 }
 
@@ -37,9 +37,9 @@ export interface RunResult {
   turns: number;
   durationMs: number;
   startedAt: string;
-  /** run 产生的新 session id，供回溯 */
+  /** The new session id produced by this run, for later inspection */
   replaySessionId?: string;
-  /** run 器本身出错（非断言失败），例如 claude CLI 不存在、worktree 失败 */
+  /** An error in the runner itself (not an assertion failure), e.g. the claude CLI is missing or the worktree failed */
   runnerError?: string;
   cacheAttribution?: CacheBustEvent[];
 }

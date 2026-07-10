@@ -3,10 +3,10 @@ import os from "node:os";
 import path from "node:path";
 
 /**
- * 定位 Claude Code 的 session JSONL 文件。
- * session 存储在 ~/.claude/projects/<sanitized-cwd>/<session-id>.jsonl，
- * 目录名规则：cwd 中所有非字母数字字符替换为 "-"
- * （实测 `E:\MyProgram\harnesslab` → `E--MyProgram-harnesslab`）。
+ * Locate Claude Code session JSONL files.
+ * Sessions are stored at ~/.claude/projects/<sanitized-cwd>/<session-id>.jsonl,
+ * where the directory name replaces every non-alphanumeric character in cwd with "-"
+ * (observed: `E:\MyProgram\harnesslab` -> `E--MyProgram-harnesslab`).
  */
 
 export function claudeProjectsDir(claudeDir?: string): string {
@@ -25,7 +25,7 @@ export interface SessionFileInfo {
   sizeBytes: number;
 }
 
-/** 列出某个工作目录对应的全部 session 文件，按修改时间倒序（最新在前） */
+/** List every session file for a given working directory, newest first by mtime */
 export function listSessionFiles(cwd: string, claudeDir?: string): SessionFileInfo[] {
   const dir = path.join(claudeProjectsDir(claudeDir), sanitizeCwdForProjectDir(cwd));
   if (!fs.existsSync(dir)) return [];
@@ -46,15 +46,16 @@ export function listSessionFiles(cwd: string, claudeDir?: string): SessionFileIn
 }
 
 /**
- * 找到目标 session 文件。
- * - sessionId 给定 → 精确找 <id>.jsonl（先在当前 cwd 的项目目录找，找不到再全局扫）
- * - 否则 → 当前 cwd 项目目录下最新的一个
+ * Find the target session file.
+ * - sessionId given -> look for an exact <id>.jsonl match (first in the current cwd's project
+ *   directory, then a global scan if not found there)
+ * - otherwise -> the newest file in the current cwd's project directory
  */
 export function findSessionFile(opts: {
   cwd: string;
   sessionId?: string;
   claudeDir?: string;
-  /** freeze 通常在 session 刚结束后运行，最新文件可能就是"运行 freeze 的这个会话"，允许排除 */
+  /** freeze usually runs right after a session ends, so the newest file may be "the session running freeze itself"; allow excluding it */
   excludeSessionId?: string;
 }): SessionFileInfo | undefined {
   const files = listSessionFiles(opts.cwd, opts.claudeDir);
@@ -62,7 +63,7 @@ export function findSessionFile(opts: {
   if (opts.sessionId) {
     const local = files.find((f) => f.sessionId === opts.sessionId);
     if (local) return local;
-    // 全局扫（session 可能属于其他项目目录，例如 worktree）
+    // Global scan (the session may belong to a different project directory, e.g. a worktree)
     const projectsRoot = claudeProjectsDir(opts.claudeDir);
     if (!fs.existsSync(projectsRoot)) return undefined;
     for (const projDir of fs.readdirSync(projectsRoot)) {

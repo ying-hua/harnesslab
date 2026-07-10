@@ -1,13 +1,13 @@
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-/** case.yaml 的顶层结构（规格书 §5.2） */
+/** Top-level structure of case.yaml (spec §5.2) */
 export interface FixtureCase {
   schemaVersion: "0.1";
   source: string;
   task: string;
   workspace: {
     base_ref: string;
-    /** 相对 fixture 目录的路径；无未提交改动时可省略 */
+    /** Path relative to the fixture directory; omit when there are no uncommitted changes */
     dirty_patch?: string;
   };
   allowed_tools: string[];
@@ -30,9 +30,9 @@ export type Assertion =
 
 export interface FilesChangedAssertion {
   type: "files_changed";
-  /** 每个 glob 必须至少匹配一个被改动的文件 */
+  /** Each glob must match at least one changed file */
   must_include?: string[];
-  /** 任何被改动的文件都不能匹配这些 glob */
+  /** No changed file may match any of these globs */
   must_not_touch?: string[];
 }
 
@@ -44,7 +44,7 @@ export interface CommandAssertion {
 
 export interface ForbiddenCommandsAssertion {
   type: "forbidden_commands";
-  /** 通配模式（`*` 为通配符），对会话轨迹中每条 Bash 命令做非锚定匹配 */
+  /** Wildcard patterns (`*` as the wildcard), matched unanchored against every Bash command in the session trace */
   patterns: string[];
 }
 
@@ -58,7 +58,7 @@ export interface BudgetAssertion {
 export interface JudgeAssertion {
   type: "judge";
   rubric: string;
-  /** judge 断言默认 optional，不计入 pass/fail 硬指标 */
+  /** judge assertions default to optional; they never count toward the hard pass/fail verdict */
   optional?: boolean;
 }
 
@@ -73,57 +73,57 @@ const ASSERTION_TYPES = new Set([
 
 export class FixtureValidationError extends Error {
   constructor(public issues: string[]) {
-    super(`fixture 校验失败:\n${issues.map((i) => `  - ${i}`).join("\n")}`);
+    super(`fixture validation failed:\n${issues.map((i) => `  - ${i}`).join("\n")}`);
     this.name = "FixtureValidationError";
   }
 }
 
-/** 校验并返回 FixtureCase，非法时抛 FixtureValidationError（含全部问题，不是遇到第一个就停） */
+/** Validate and return a FixtureCase; throws FixtureValidationError (with every issue, not just the first) when invalid */
 export function validateFixtureCase(raw: unknown): FixtureCase {
   const issues: string[] = [];
   if (typeof raw !== "object" || raw === null) {
-    throw new FixtureValidationError(["case.yaml 顶层必须是对象"]);
+    throw new FixtureValidationError(["the top level of case.yaml must be an object"]);
   }
   const c = raw as Record<string, unknown>;
 
-  if (c.schemaVersion !== "0.1") issues.push(`schemaVersion 必须是 "0.1"，实际为 ${JSON.stringify(c.schemaVersion)}`);
-  if (typeof c.source !== "string" || !c.source) issues.push("source 必须是非空字符串");
-  if (typeof c.task !== "string" || !c.task.trim()) issues.push("task 必须是非空字符串");
+  if (c.schemaVersion !== "0.1") issues.push(`schemaVersion must be "0.1", got ${JSON.stringify(c.schemaVersion)}`);
+  if (typeof c.source !== "string" || !c.source) issues.push("source must be a non-empty string");
+  if (typeof c.task !== "string" || !c.task.trim()) issues.push("task must be a non-empty string");
 
   const ws = c.workspace as Record<string, unknown> | undefined;
   if (typeof ws !== "object" || ws === null) {
-    issues.push("workspace 必须是对象");
+    issues.push("workspace must be an object");
   } else {
-    if (typeof ws.base_ref !== "string" || !ws.base_ref) issues.push("workspace.base_ref 必须是非空字符串");
-    if (ws.dirty_patch !== undefined && typeof ws.dirty_patch !== "string") issues.push("workspace.dirty_patch 必须是字符串");
+    if (typeof ws.base_ref !== "string" || !ws.base_ref) issues.push("workspace.base_ref must be a non-empty string");
+    if (ws.dirty_patch !== undefined && typeof ws.dirty_patch !== "string") issues.push("workspace.dirty_patch must be a string");
   }
 
   if (!Array.isArray(c.allowed_tools) || c.allowed_tools.some((t) => typeof t !== "string")) {
-    issues.push("allowed_tools 必须是字符串数组");
+    issues.push("allowed_tools must be an array of strings");
   }
 
   if (!Array.isArray(c.assertions)) {
-    issues.push("assertions 必须是数组");
+    issues.push("assertions must be an array");
   } else {
     c.assertions.forEach((a: unknown, i: number) => {
       if (typeof a !== "object" || a === null) {
-        issues.push(`assertions[${i}] 必须是对象`);
+        issues.push(`assertions[${i}] must be an object`);
         return;
       }
       const t = (a as Record<string, unknown>).type;
       if (typeof t !== "string" || !ASSERTION_TYPES.has(t)) {
-        issues.push(`assertions[${i}].type 非法: ${JSON.stringify(t)}（可选值: ${[...ASSERTION_TYPES].join(", ")}）`);
+        issues.push(`assertions[${i}].type is invalid: ${JSON.stringify(t)} (valid values: ${[...ASSERTION_TYPES].join(", ")})`);
         return;
       }
       const rec = a as Record<string, unknown>;
       if ((t === "command_succeeds" || t === "command_fails") && (typeof rec.command !== "string" || !rec.command)) {
-        issues.push(`assertions[${i}].command 必须是非空字符串`);
+        issues.push(`assertions[${i}].command must be a non-empty string`);
       }
       if (t === "forbidden_commands" && (!Array.isArray(rec.patterns) || rec.patterns.length === 0)) {
-        issues.push(`assertions[${i}].patterns 必须是非空数组`);
+        issues.push(`assertions[${i}].patterns must be a non-empty array`);
       }
       if (t === "judge" && typeof rec.rubric !== "string") {
-        issues.push(`assertions[${i}].rubric 必须是字符串`);
+        issues.push(`assertions[${i}].rubric must be a string`);
       }
     });
   }

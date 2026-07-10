@@ -14,7 +14,7 @@ const golden = fs.readFileSync(goldenPath, "utf8");
 describe("parseSessionJsonl (golden file)", () => {
   const session = parseSessionJsonl(golden);
 
-  it("session 元信息正确", () => {
+  it("parses session metadata correctly", () => {
     expect(session.schemaVersion).toBe("0.1");
     expect(session.source).toBe("claude-code");
     expect(session.sessionId).toBe("test-session-0001");
@@ -24,14 +24,14 @@ describe("parseSessionJsonl (golden file)", () => {
     expect(session.endedAt).toBe("2026-07-01T10:00:30.000Z");
   });
 
-  it("工具循环合并为一个 assistant turn：user + assistant 共 2 个 turn", () => {
+  it("merges a tool loop into a single assistant turn: user + assistant = 2 turns total", () => {
     expect(session.turns).toHaveLength(2);
     expect(session.turns[0].role).toBe("user");
-    expect(session.turns[0].content).toContain("token 过期");
+    expect(session.turns[0].content).toContain("token expiry");
     expect(session.turns[1].role).toBe("assistant");
   });
 
-  it("tool_use 与 tool_result 通过 id 正确配对", () => {
+  it("pairs tool_use with tool_result by id correctly", () => {
     const calls = session.turns[1].toolCalls;
     expect(calls).toHaveLength(2);
 
@@ -43,11 +43,11 @@ describe("parseSessionJsonl (golden file)", () => {
     expect(calls[0].endedAt).toBe("2026-07-01T10:00:12.000Z");
 
     expect(calls[1].name).toBe("Edit");
-    // tool_result content 为块数组时也能取出文本
+    // Also extracts text when tool_result content is a block array
     expect(calls[1].result.output).toContain("has been updated");
   });
 
-  it("usage 按 turn 求和，含 cache 字段", () => {
+  it("sums usage per turn, including cache fields", () => {
     expect(session.turns[1].usage).toEqual({
       inputTokens: 123,
       outputTokens: 112,
@@ -61,19 +61,19 @@ describe("parseSessionJsonl (golden file)", () => {
     expect(totals.cacheWrite).toBe(200);
   });
 
-  it("sidechain / isMeta / attachment / queue-operation / ai-title / last-prompt 全部被跳过", () => {
+  it("skips sidechain / isMeta / attachment / queue-operation / ai-title / last-prompt entirely", () => {
     const allText = JSON.stringify(session.turns);
-    expect(allText).not.toContain("子代理");
-    expect(allText).not.toContain("meta 行");
-    // sidechain 的 999 token 不计入
+    expect(allText).not.toContain("Subagent");
+    expect(allText).not.toContain("meta line");
+    // the sidechain's 999 tokens must not be counted
     expect(sumSessionTokens(session).output).toBeLessThan(999);
     const warnings = session.parseWarnings ?? [];
     expect(warnings.some((w) => w.includes("queue-operation"))).toBe(true);
     expect(warnings.some((w) => w.includes("ai-title"))).toBe(true);
   });
 
-  it("finalResult 取最后一条 assistant 文本", () => {
-    expect(session.finalResult.text).toContain("时钟偏移");
+  it("finalResult takes the last assistant text", () => {
+    expect(session.finalResult.text).toContain("clock-skew");
     expect(session.finalResult.isError).toBe(false);
     expect(session.finalResult.totalTokens).toEqual({
       input: 123,
@@ -83,25 +83,25 @@ describe("parseSessionJsonl (golden file)", () => {
     });
   });
 
-  it("extractBashCommands 只取 Bash 调用", () => {
+  it("extractBashCommands only picks up Bash calls", () => {
     expect(extractBashCommands(session)).toEqual(["pytest tests/test_auth.py"]);
   });
 });
 
-describe("parseSessionJsonl 容错", () => {
-  it("坏 JSON 行跳过并计 warning，不抛异常", () => {
+describe("parseSessionJsonl error tolerance", () => {
+  it("skips a bad JSON line and records a warning instead of throwing", () => {
     const session = parseSessionJsonl('not json at all\n{"type":"user","isSidechain":false,"message":{"role":"user","content":"hi"},"timestamp":"2026-07-01T10:00:00.000Z","sessionId":"s1","cwd":"/x"}');
     expect(session.turns).toHaveLength(1);
-    expect(session.parseWarnings?.some((w) => w.includes("不是合法 JSON"))).toBe(true);
+    expect(session.parseWarnings?.some((w) => w.includes("not valid JSON"))).toBe(true);
   });
 
-  it("空输入返回空 session", () => {
+  it("returns an empty session for empty input", () => {
     const session = parseSessionJsonl("");
     expect(session.turns).toHaveLength(0);
     expect(session.sessionId).toBe("");
   });
 
-  it("孤儿 tool_result 被丢弃并计 warning", () => {
+  it("discards an orphaned tool_result and records a warning", () => {
     const line = JSON.stringify({
       type: "user",
       isSidechain: false,
